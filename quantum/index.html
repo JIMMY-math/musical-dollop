@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>量子物理教学演示</title>
+  <meta name="theme-color" content="#0b74ff">
+  <link rel="stylesheet" href="styles.css">
+  <!-- KaTeX 用于渲染数学公式 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <!-- Pyodide 用于在浏览器中运行 Python (numpy) -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <!-- 中文字体 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <header class="app-header">
+    <div class="header-left">
+      <h1>⚛️ 量子物理教学演示</h1>
+    </div>
+    <div class="header-center">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="搜索演示实验...">
+      </div>
+    </div>
+    <div class="header-right">
+      <span id="pyodideStatus" class="status-badge status-loading">Python 引擎加载中...</span>
+    </div>
+  </header>
+
+  <!-- 分类标签栏 -->
+  <div class="category-tabs">
+    <button class="category-tab active" data-category="全部">全部</button>
+    <button class="category-tab" data-category="波动力学">波动力学</button>
+    <button class="category-tab" data-category="干涉与衍射">干涉与衍射</button>
+    <button class="category-tab" data-category="量子效应">量子效应</button>
+    <button class="category-tab" data-category="基本原理">基本原理</button>
+  </div>
+
+  <main>
+    <section id="grid" class="grid" aria-live="polite"></section>
+  </main>
+
+  <!-- 演示弹窗模板 -->
+  <template id="tile-template">
+    <article class="tile">
+      <div class="tile-media">
+        <canvas class="tile-canvas"></canvas>
+        <div class="tile-overlay">点击进入演示</div>
+      </div>
+      <div class="tile-meta">
+        <div class="tile-info">
+          <div class="title"></div>
+          <div class="category"></div>
+        </div>
+        <button class="open-btn button">开始演示 →</button>
+      </div>
+    </article>
+  </template>
+
+  <!-- 演示详情弹窗 -->
+  <div id="demoModal" class="demo-modal" style="display:none;position:fixed;inset:0;z-index:1000;">
+    <div class="demo-backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,0.6);"></div>
+    <div class="demo-panel" style="position:relative;margin:30px auto;max-width:1100px;max-height:92vh;background:#fff;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;">
+      <!-- 弹窗头部 -->
+      <div class="demo-header">
+        <div>
+          <h2 id="demoTitle" style="margin:0;font-size:18px;"></h2>
+          <div id="demoCategory" style="font-size:12px;color:#999;margin-top:2px;"></div>
+        </div>
+        <button id="demoClose" class="close-btn">&times;</button>
+      </div>
+
+      <!-- 弹窗主体：左侧画布 + 右侧控件 -->
+      <div class="demo-body">
+        <div class="demo-canvas-wrap">
+          <canvas id="demoCanvas"></canvas>
+          <div id="demoFormula" class="formula-box"></div>
+        </div>
+        <div class="demo-controls">
+          <div class="controls-title">参数调节</div>
+          <div id="controlPanel"></div>
+          <div class="controls-title" style="margin-top:16px;">说明</div>
+          <div id="demoDescription" class="description-box"></div>
+        </div>
+      </div>
+
+      <!-- 弹窗底部操作 -->
+      <div class="demo-footer">
+        <button id="resetBtn" class="button">⟲ 重置参数</button>
+        <button id="animateBtn" class="button button-primary">▶ 播放动画</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
