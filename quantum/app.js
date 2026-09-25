@@ -49,6 +49,20 @@ const demos = [
     controls: [
       { key: 'sigma', label: '波包宽度 σ', min: 0.3, max: 3.0, step: 0.1, value: 1.0 }
     ]
+  },
+  {
+    id: 'qubit',
+    title: '量子比特与布洛赫球',
+    category: '量子计算',
+    description: '二能级量子系统（量子比特）的状态可用布洛赫球上的一个矢量表示。本演示通过求解含弛豫（T₁）与退相干（T₂）的Lindblad主方程，展示布洛赫矢量 <σₓ>, <σᵧ>, <σ_z> 随时间的演化轨迹。',
+    formula: '$$\\hat{H} = \\omega(\\cos\\theta\\,\\hat{\\sigma}_z + \\sin\\theta\\,\\hat{\\sigma}_x), \\quad \\frac{d\\hat{\\rho}}{dt} = -i[\\hat{H},\\hat{\\rho}] + \\sum_k \\mathcal{D}[\\hat{C}_k]\\hat{\\rho}$$',
+    controls: [
+      { key: 'w', label: '角频率 ω', min: 0.5, max: 12.0, step: 0.5, value: 6.28 },
+      { key: 'theta', label: '磁场角 θ (×π)', min: 0, max: 1.0, step: 0.05, value: 0.2 },
+      { key: 'gamma1', label: '弛豫率 γ₁ (T₁)', min: 0, max: 2.0, step: 0.05, value: 0.5 },
+      { key: 'gamma2', label: '退相干率 γ₂ (T₂)', min: 0, max: 2.0, step: 0.05, value: 0.2 },
+      { key: 'a', label: '初态|0⟩权重 a', min: 0, max: 1.0, step: 0.05, value: 1.0 }
+    ]
   }
 ];
 
@@ -62,7 +76,8 @@ const state = {
   currentParams: {},
   animating: false,
   animationId: null,
-  t: 0
+  t: 0,
+  qubitData: null  // 存储量子比特轨迹数据
 };
 
 // ============ DOM 元素 ============
@@ -176,6 +191,59 @@ def uncertainty(sigma, N=800, x_range=10):
     product = delta_x * delta_p
     return (x.tolist(), prob_x.tolist(), p.tolist(), prob_p.tolist(),
             float(delta_x), float(delta_p), float(product))
+
+def qubit_bloch(w, theta, gamma1, gamma2, a, N=200, t_max=4.0):
+    """量子比特在布洛赫球上的演化：求解含弛豫与退相干的Lindblad主方程"""
+    sx = np.array([[0, 1], [1, 0]], dtype=complex)
+    sy = np.array([[0, -1j], [1j, 0]], dtype=complex)
+    sz = np.array([[1, 0], [0, -1]], dtype=complex)
+    sm = np.array([[0, 1], [0, 0]], dtype=complex)
+    sp = np.array([[0, 0], [1, 0]], dtype=complex)
+
+    H = w * (np.cos(theta) * sz + np.sin(theta) * sx)
+
+    # 构造坍缩算符
+    n_th = 0.5  # 环境温度对应的平均声子数
+    c_ops = []
+    rate = gamma1 * (n_th + 1.0)
+    if rate > 0.0:
+        c_ops.append(np.sqrt(rate) * sm)
+    rate = gamma1 * n_th
+    if rate > 0.0:
+        c_ops.append(np.sqrt(rate) * sp)
+    rate = gamma2
+    if rate > 0.0:
+        c_ops.append(np.sqrt(rate) * sz)
+
+    def lindblad_rhs(rho):
+        drho = -1j * (H @ rho - rho @ H)
+        for c in c_ops:
+            cdc = c.conj().T @ c
+            drho += c @ rho @ c.conj().T - 0.5 * (cdc @ rho + rho @ cdc)
+        return drho
+
+    # 初始态
+    psi0 = (a * np.array([1, 0], dtype=complex)
+            + (1.0 - a) * np.array([0, 1], dtype=complex))
+    psi0 = psi0 / np.linalg.norm(psi0)
+    rho = np.outer(psi0, psi0.conj())
+
+    tlist = np.linspace(0.0, t_max, N)
+    dt = tlist[1] - tlist[0] if N > 1 else 0.0
+
+    sx_arr, sy_arr, sz_arr = [], [], []
+    for _ in tlist:
+        sx_arr.append(float(np.real(np.trace(sx @ rho))))
+        sy_arr.append(float(np.real(np.trace(sy @ rho))))
+        sz_arr.append(float(np.real(np.trace(sz @ rho))))
+        # 四阶 Runge-Kutta 积分
+        k1 = lindblad_rhs(rho)
+        k2 = lindblad_rhs(rho + 0.5 * dt * k1)
+        k3 = lindblad_rhs(rho + 0.5 * dt * k2)
+        k4 = lindblad_rhs(rho + dt * k3)
+        rho = rho + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+    return sx_arr, sy_arr, sz_arr
 `);
 
     state.pyodideReady = true;
@@ -251,6 +319,8 @@ function drawThumbnail(canvas, demo) {
     drawTunnelingThumb(ctx, cw, ch);
   } else if (demo.id === 'uncertainty') {
     drawUncertaintyThumb(ctx, cw, ch);
+  } else if (demo.id === 'qubit') {
+    drawQubitThumb(ctx, cw, ch);
   }
 }
 
@@ -337,6 +407,51 @@ function drawUncertaintyThumb(ctx, w, h) {
   ctx.setLineDash([]);
 }
 
+function drawQubitThumb(ctx, w, h) {
+  const cx = w / 2, cy = h / 2;
+  const r = Math.min(w, h) * 0.32;
+  const elev = 25 * Math.PI / 180;
+  const azim = -40 * Math.PI / 180;
+
+  function proj(x, y, z) {
+    const x1 = x * Math.cos(azim) - y * Math.sin(azim);
+    const y1 = x * Math.sin(azim) + y * Math.cos(azim);
+    const y2 = y1 * Math.cos(elev) - z * Math.sin(elev);
+    return { x: cx + x1 * r, y: cy - y2 * r };
+  }
+
+  // 球轮廓
+  ctx.strokeStyle = '#4a9eff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // z 轴
+  const zt = proj(0, 0, 1);
+  ctx.strokeStyle = '#ffd93d';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(zt.x, zt.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 红色状态矢量（示意）
+  const sv = proj(0.6, 0.3, 0.7);
+  ctx.strokeStyle = '#ff3b3b';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(sv.x, sv.y);
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(sv.x, sv.y, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 // ============ 打开演示弹窗 ============
 function openDemo(demo) {
   if (!state.pyodideReady) {
@@ -385,6 +500,7 @@ function closeDemo() {
   stopAnimation();
   demoModal.style.display = 'none';
   state.currentDemo = null;
+  state.qubitData = null;
 }
 
 function resizeDemoCanvas() {
@@ -445,6 +561,12 @@ async function updateDemo() {
       const result = state.pyodide.globals.get('uncertainty')(p.sigma);
       const [x, prob_x, p_vals, prob_p, dx, dp, product] = result.toJs();
       drawUncertainty(w, h, x, prob_x, p_vals, prob_p, dx, dp, product);
+    } else if (demo.id === 'qubit') {
+      const theta = p.theta * Math.PI;
+      const result = state.pyodide.globals.get('qubit_bloch')(p.w, theta, p.gamma1, p.gamma2, p.a);
+      const [sx_arr, sy_arr, sz_arr] = result.toJs();
+      state.qubitData = { sx: sx_arr, sy: sy_arr, sz: sz_arr, frame: 0 };
+      drawQubitBloch(w, h, sx_arr, sy_arr, sz_arr, 0);
     }
   } catch (err) {
     console.error('计算失败:', err);
@@ -709,6 +831,142 @@ function drawGaussianPlot(px, py, pw, ph, x, data, color, title, xlabel, delta) 
   demoCtx.fillText(title, px, py - 8);
 }
 
+// ============ 绘制：量子比特布洛赫球（3D 投影） ============
+function drawQubitBloch(w, h, sx_arr, sy_arr, sz_arr, frame) {
+  demoCtx.fillStyle = '#0d1b2a';
+  demoCtx.fillRect(0, 0, w, h);
+
+  const cx = w / 2;
+  const cy = h / 2;
+  const radius = Math.min(w, h) * 0.34;
+  const elev = 25 * Math.PI / 180;
+  const azim = -40 * Math.PI / 180;
+
+  // 3D → 2D 投影
+  function proj(x, y, z) {
+    const x1 = x * Math.cos(azim) - y * Math.sin(azim);
+    const y1 = x * Math.sin(azim) + y * Math.cos(azim);
+    const y2 = y1 * Math.cos(elev) - z * Math.sin(elev);
+    return { x: cx + x1 * radius, y: cy - y2 * radius };
+  }
+
+  // 球轮廓
+  demoCtx.strokeStyle = '#4a9eff';
+  demoCtx.lineWidth = 1.5;
+  demoCtx.beginPath();
+  demoCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+  demoCtx.stroke();
+
+  // 赤道线（xy 平面投影为椭圆）
+  demoCtx.strokeStyle = 'rgba(74,158,255,0.35)';
+  demoCtx.lineWidth = 1;
+  demoCtx.beginPath();
+  for (let i = 0; i <= 120; i++) {
+    const a = (i / 120) * Math.PI * 2;
+    const p = proj(Math.cos(a), Math.sin(a), 0);
+    if (i === 0) demoCtx.moveTo(p.x, p.y); else demoCtx.lineTo(p.x, p.y);
+  }
+  demoCtx.stroke();
+
+  // 经线（xz 平面）
+  demoCtx.strokeStyle = 'rgba(74,158,255,0.2)';
+  demoCtx.beginPath();
+  for (let i = 0; i <= 120; i++) {
+    const a = (i / 120) * Math.PI * 2;
+    const p = proj(Math.cos(a), 0, Math.sin(a));
+    if (i === 0) demoCtx.moveTo(p.x, p.y); else demoCtx.lineTo(p.x, p.y);
+  }
+  demoCtx.stroke();
+
+  // 坐标轴
+  const axes = [
+    { x: 1, y: 0, z: 0, label: 'x', color: '#ff6b6b' },
+    { x: 0, y: 1, z: 0, label: 'y', color: '#00ff88' },
+    { x: 0, y: 0, z: 1, label: 'z', color: '#ffd93d' }
+  ];
+  axes.forEach(ax => {
+    const p = proj(ax.x, ax.y, ax.z);
+    demoCtx.strokeStyle = ax.color;
+    demoCtx.lineWidth = 1.5;
+    demoCtx.setLineDash([5, 4]);
+    demoCtx.beginPath();
+    demoCtx.moveTo(cx, cy);
+    demoCtx.lineTo(p.x, p.y);
+    demoCtx.stroke();
+    demoCtx.setLineDash([]);
+    demoCtx.fillStyle = ax.color;
+    demoCtx.font = 'bold 14px sans-serif';
+    demoCtx.fillText(ax.label, p.x + 5, p.y + 5);
+  });
+
+  // |0> 和 |1> 标注
+  const p0 = proj(0, 0, 1);
+  const p1 = proj(0, 0, -1);
+  demoCtx.fillStyle = '#ffd93d';
+  demoCtx.font = '12px sans-serif';
+  demoCtx.fillText('|0⟩', p0.x + 6, p0.y - 6);
+  demoCtx.fillStyle = '#aaa';
+  demoCtx.fillText('|1⟩', p1.x + 6, p1.y + 14);
+
+  const f = Math.max(0, Math.min(frame, sx_arr.length - 1));
+
+  // 轨迹曲线（到当前帧为止）
+  if (f > 0) {
+    demoCtx.strokeStyle = 'rgba(255,80,80,0.7)';
+    demoCtx.lineWidth = 2;
+    demoCtx.beginPath();
+    for (let i = 0; i <= f; i++) {
+      const p = proj(sx_arr[i], sy_arr[i], sz_arr[i]);
+      if (i === 0) demoCtx.moveTo(p.x, p.y); else demoCtx.lineTo(p.x, p.y);
+    }
+    demoCtx.stroke();
+  }
+
+  // 当前状态矢量
+  const p = proj(sx_arr[f], sy_arr[f], sz_arr[f]);
+  demoCtx.strokeStyle = '#ff3b3b';
+  demoCtx.lineWidth = 3;
+  demoCtx.beginPath();
+  demoCtx.moveTo(cx, cy);
+  demoCtx.lineTo(p.x, p.y);
+  demoCtx.stroke();
+
+  // 箭头头部
+  const angle = Math.atan2(p.y - cy, p.x - cx);
+  const arrowLen = 12;
+  demoCtx.fillStyle = '#ff3b3b';
+  demoCtx.beginPath();
+  demoCtx.moveTo(p.x, p.y);
+  demoCtx.lineTo(p.x - arrowLen * Math.cos(angle - 0.4), p.y - arrowLen * Math.sin(angle - 0.4));
+  demoCtx.lineTo(p.x - arrowLen * Math.cos(angle + 0.4), p.y - arrowLen * Math.sin(angle + 0.4));
+  demoCtx.closePath();
+  demoCtx.fill();
+
+  // 状态点
+  demoCtx.fillStyle = '#fff';
+  demoCtx.beginPath();
+  demoCtx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+  demoCtx.fill();
+
+  // 期望值与时间信息
+  demoCtx.fillStyle = '#fff';
+  demoCtx.font = '13px monospace';
+  const t = (f / Math.max(1, sx_arr.length - 1)) * 4.0;
+  demoCtx.fillStyle = '#ff6b6b';
+  demoCtx.fillText(`<σx> = ${sx_arr[f].toFixed(3)}`, 16, 28);
+  demoCtx.fillStyle = '#00ff88';
+  demoCtx.fillText(`<σy> = ${sy_arr[f].toFixed(3)}`, 16, 48);
+  demoCtx.fillStyle = '#ffd93d';
+  demoCtx.fillText(`<σz> = ${sz_arr[f].toFixed(3)}`, 16, 68);
+  demoCtx.fillStyle = '#ccc';
+  demoCtx.fillText(`t = ${t.toFixed(2)}`, 16, 88);
+
+  // 提示
+  demoCtx.fillStyle = '#888';
+  demoCtx.font = '11px sans-serif';
+  demoCtx.fillText('点击「播放动画」观察布洛赫矢量演化', w - 200, h - 16);
+}
+
 // ============ 动画控制 ============
 function startAnimation() {
   if (state.animating) return;
@@ -733,25 +991,32 @@ function stopAnimation() {
   animateBtn.classList.add('button-primary');
 }
 
-// 带时间演化的绘制（仅势阱支持）
+// 带时间演化的绘制
 async function updateDemoAnimated() {
-  if (!state.currentDemo || state.currentDemo.id !== 'well') {
-    updateDemo();
-    return;
-  }
+  if (!state.currentDemo) return;
   const demo = state.currentDemo;
-  const p = state.currentParams;
   const w = demoCanvas.width / 2;
   const h = demoCanvas.height / 2;
-  try {
-    const result = state.pyodide.globals.get('well_wavefunction')(p.n, p.L);
-    const [x, psi, prob, E] = result.toJs();
-    // 叠加时间相位 e^(-iEt)，实部 cos(Et)
-    const t = state.t;
-    const psiT = psi.map(v => v * Math.cos(E * t));
-    drawWell(w, h, x, psiT, prob, E, p.n, p.L);
-  } catch (err) {
-    console.error(err);
+
+  if (demo.id === 'well') {
+    const p = state.currentParams;
+    try {
+      const result = state.pyodide.globals.get('well_wavefunction')(p.n, p.L);
+      const [x, psi, prob, E] = result.toJs();
+      const t = state.t;
+      const psiT = psi.map(v => v * Math.cos(E * t));
+      drawWell(w, h, x, psiT, prob, E, p.n, p.L);
+    } catch (err) {
+      console.error(err);
+    }
+  } else if (demo.id === 'qubit') {
+    if (!state.qubitData) { await updateDemo(); return; }
+    // 逐帧推进布洛赫矢量轨迹
+    state.qubitData.frame = (state.qubitData.frame + 2) % state.qubitData.sx.length;
+    const { sx, sy, sz, frame } = state.qubitData;
+    drawQubitBloch(w, h, sx, sy, sz, frame);
+  } else {
+    updateDemo();
   }
 }
 
